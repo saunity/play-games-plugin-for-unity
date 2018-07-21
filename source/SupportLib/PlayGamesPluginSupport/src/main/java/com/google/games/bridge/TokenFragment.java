@@ -26,21 +26,26 @@ import android.os.Bundle;
 import android.support.annotation.NonNull;
 import android.support.annotation.Nullable;
 import android.util.Log;
-import android.view.View;
 
 import com.google.android.gms.auth.api.Auth;
+import com.google.android.gms.auth.api.signin.GoogleSignIn;
 import com.google.android.gms.auth.api.signin.GoogleSignInAccount;
+import com.google.android.gms.auth.api.signin.GoogleSignInClient;
 import com.google.android.gms.auth.api.signin.GoogleSignInOptions;
 import com.google.android.gms.auth.api.signin.GoogleSignInResult;
 import com.google.android.gms.auth.api.signin.GoogleSignInStatusCodes;
 import com.google.android.gms.common.ConnectionResult;
+import com.google.android.gms.common.GoogleApiAvailability;
 import com.google.android.gms.common.GooglePlayServicesUtil;
 import com.google.android.gms.common.api.CommonStatusCodes;
+import com.google.android.gms.common.api.GoogleApi;
+import com.google.android.gms.common.api.GoogleApiActivity;
 import com.google.android.gms.common.api.GoogleApiClient;
 import com.google.android.gms.common.api.PendingResult;
-import com.google.android.gms.common.api.ResultCallback;
 import com.google.android.gms.common.api.Scope;
 import com.google.android.gms.games.Games;
+import com.google.android.gms.tasks.OnCompleteListener;
+import com.google.android.gms.tasks.Task;
 
 
 /**
@@ -63,7 +68,7 @@ public class TokenFragment extends Fragment
     private static final Object lock = new Object();
     private static TokenRequest pendingTokenRequest;
     private static TokenFragment helperFragment;
-    private GoogleApiClient mGoogleApiClient;
+    private GoogleSignInClient mGoogleSignInClient;
 
     private static boolean mStartUpSignInCheckPerformed = false;
     /**
@@ -107,44 +112,53 @@ public class TokenFragment extends Fragment
                                            boolean forceRefreshToken,
                                            String[] additionalScopes,
                                            boolean hidePopups,
-                                           String accountName) {
+                                           String accountName)
+    {
         TokenRequest request = new TokenRequest(requestAuthCode,
                 requestEmail, requestIdToken, webClientId,
                 forceRefreshToken, additionalScopes, hidePopups, accountName);
 
                 boolean ok = false;
-                synchronized (lock) {
-                    if (pendingTokenRequest == null) {
+                synchronized (lock)
+                {
+                    if (pendingTokenRequest == null)
+                    {
                         pendingTokenRequest = request;
                         ok = true;
                     }
                 }
-                if(!ok) {
-                    Log.e(TAG, "Already a pending token request (requested == ): " + request);
-                    Log.e(TAG, "Already a pending token request: " + pendingTokenRequest);
+                if(!ok)
+                {
+                    Log.e(TAG, "Already a pending token request requested = " + request);
                     request.setResult(CommonStatusCodes.DEVELOPER_ERROR);
                     return request.getPendingResponse();
                 }
 
 
-        TokenFragment fragment = (TokenFragment)
-                parentActivity.getFragmentManager().findFragmentByTag(FRAGMENT_TAG);
+        TokenFragment fragment = (TokenFragment)parentActivity.getFragmentManager().findFragmentByTag(FRAGMENT_TAG);
 
-        if (fragment == null) {
-            try {
+        if (fragment == null)
+        {
+            try
+            {
                 Log.d(TAG, "Creating fragment");
                 fragment = new TokenFragment();
                 FragmentTransaction trans = parentActivity.getFragmentManager().beginTransaction();
                 trans.add(fragment, FRAGMENT_TAG);
                 trans.commit();
-            } catch (Throwable th) {
+            }
+            catch (Throwable th)
+            {
                 Log.e(TAG, "Cannot launch token fragment:" + th.getMessage(), th);
                 request.setResult(CommonStatusCodes.ERROR);
-                synchronized (lock) {
+                synchronized (lock)
+                {
                     pendingTokenRequest = null;
                 }
             }
-        } else {
+        }
+        else
+        {
                     Log.d(TAG, "Fragment exists.. calling processRequests");
                     fragment.processRequest();
         }
@@ -159,78 +173,65 @@ public class TokenFragment extends Fragment
      */
     public static PendingResult getAnotherAuthCode(Activity parentActivity,
                                                    final boolean reauthIfNeeded,
-                                                   String webClientId) {
-
+                                                   String webClientId)
+    {
         TokenRequest request = new TokenRequest(true,
                 true, true, webClientId,
                 false, null, true, null);
 
 
-        final TokenFragment fragment = (TokenFragment)
-                parentActivity.getFragmentManager().findFragmentByTag(FRAGMENT_TAG);
-        if (fragment == null) {
+        final TokenFragment fragment = (TokenFragment)parentActivity.getFragmentManager().findFragmentByTag(FRAGMENT_TAG);
+        if (fragment == null)
+        {
             // The fragment should already be here, so return an error.
             Log.e(TAG,"Fragment is not found.  Could not be authenticated already?");
             request.setResult(CommonStatusCodes.DEVELOPER_ERROR);
-        } else {
-            if (fragment.mGoogleApiClient != null &&
-                    fragment.mGoogleApiClient.hasConnectedApi(Games.API))  {
-
+        }
+        else
+        {
+            if (fragment.mGoogleSignInClient != null)
+            {
                 boolean ok = false;
-                synchronized (lock) {
-                    if (pendingTokenRequest == null) {
+                synchronized (lock)
+                {
+                    if (pendingTokenRequest == null)
+                    {
                         pendingTokenRequest = request;
                         ok = true;
                     }
                 }
-                if(!ok) {
+                if(!ok) 
+				{
                     Log.e(TAG, "Already a pending token request (requested == ): " + request);
                     Log.e(TAG, "Already a pending token request: " + pendingTokenRequest);
                     request.setResult(CommonStatusCodes.DEVELOPER_ERROR);
                     return request.getPendingResponse();
                 }
 
-                Auth.GoogleSignInApi.silentSignIn(fragment.mGoogleApiClient)
-                        .setResultCallback(
-                        new ResultCallback<GoogleSignInResult>() {
-                            @Override
-                            public void onResult(
-                                    @NonNull GoogleSignInResult googleSignInResult) {
-                                if (googleSignInResult.isSuccess()) {
-                                    fragment.onSignedIn(googleSignInResult.getStatus().getStatusCode(),
-                                            googleSignInResult.getSignInAccount());
-                                } else if (
-                                        googleSignInResult.getStatus().getStatusCode() == CommonStatusCodes.SIGN_IN_REQUIRED
-                                        && reauthIfNeeded) {
-                                    Intent signInIntent = Auth.GoogleSignInApi
-                                            .getSignInIntent(fragment.mGoogleApiClient);
-                                    fragment.startActivityForResult(signInIntent, RC_ACCT);
-                                } else {
-                                    Log.e(TAG,"Error with " +
-                                            "silentSignIn: " +
-                                            googleSignInResult.getStatus());
-                                    fragment.onSignedIn(googleSignInResult.getStatus().getStatusCode(),
-                                            null);
-                                }
-                            }
-                        }
-                );
-            } else {
+                fragment.signInSilently(fragment.mGoogleSignInClient);
+            }
+            else
+            {
                 Log.d(TAG,"No connected Games API, waiting for onConnected");
             }
         }
-
         return request.getPendingResponse();
     }
 
-    public static void signOut(Activity activity) {
+    public static int getLoginStatusCode()
+    {
+        return  pendingTokenRequest.getStatusCode();
+    }
 
-        TokenFragment fragment = (TokenFragment)
-                activity.getFragmentManager().findFragmentByTag(FRAGMENT_TAG);
-        if (fragment != null) {
+    public static void signOut(Activity activity)
+    {
+        TokenFragment fragment = (TokenFragment)activity.getFragmentManager().findFragmentByTag(FRAGMENT_TAG);
+        if (fragment != null)
+        {
             fragment.reset();
         }
-        synchronized (lock) {
+        synchronized (lock)
+        {
             pendingTokenRequest = null;
         }
    }
@@ -238,24 +239,19 @@ public class TokenFragment extends Fragment
     /**
      * signs out and disconnects the client.
      */
-    private void reset() {
-        if (mGoogleApiClient != null) {
-            if (mGoogleApiClient.hasConnectedApi(Games.API)) {
-                try {
-                    Games.signOut(mGoogleApiClient);
-                } catch (RuntimeException e) {
-                    Log.w(TAG, "Caught exception when calling Games.signOut: " +
-                    e.getMessage(), e);
-                }
-                try {
-                Auth.GoogleSignInApi.signOut(mGoogleApiClient);
-                } catch (RuntimeException e) {
-                    Log.w(TAG, "Caught exception when calling GoogleSignInAPI.signOut: " +
-                            e.getMessage(), e);
-                }
-            }
-            mGoogleApiClient.disconnect();
-            mGoogleApiClient = null;
+    private void reset()
+    {
+        if (mGoogleSignInClient != null)
+        {
+            mGoogleSignInClient.signOut().addOnCompleteListener(getActivity(),
+                    new OnCompleteListener<Void>()
+                    {
+                        @Override
+                        public void onComplete(@NonNull Task<Void> task)
+                        {
+                        }
+                    });
+            mGoogleSignInClient = null;
         }
     }
 
@@ -263,138 +259,146 @@ public class TokenFragment extends Fragment
      * Processes the token requests that are queued up.
      * First checking that the google api client is connected.
      */
-    private void processRequest() {
-
+    private void processRequest()
+    {
         TokenRequest request;
-            synchronized (lock) {
+            synchronized (lock)
+            {
                 request = pendingTokenRequest;
             }
 
         // no request, no need to continue.
-        if (request == null) {
+        if (request == null)
+        {
             return;
         }
 
         // Build the GoogleAPIClient
         buildClient(request);
-        synchronized (lock) {
+        synchronized (lock)
+        {
             request = pendingTokenRequest;
         }
-        if (request != null) {
-
+        if (request != null)
+        {
             boolean signIn = true;
-            if (!mStartUpSignInCheckPerformed) {
+            if (!mStartUpSignInCheckPerformed)
+            {
                 mStartUpSignInCheckPerformed = true;
                 SharedPreferences sharedPref = getActivity().getPreferences(Context.MODE_PRIVATE);
                 signIn = !sharedPref.getBoolean(PREF_DECLINED_KEY, false);
             }
 
-            if (signIn || mGoogleApiClient.hasConnectedApi(Games.API))  {
-
-                Auth.GoogleSignInApi.silentSignIn(mGoogleApiClient).setResultCallback(
-                        new ResultCallback<GoogleSignInResult>() {
-                            @Override
-                            public void onResult(
-                                    @NonNull GoogleSignInResult googleSignInResult) {
-                                if (googleSignInResult.isSuccess()) {
-                                    onSignedIn(googleSignInResult.getStatus().getStatusCode(),
-                                            googleSignInResult.getSignInAccount());
-                                } else if (googleSignInResult.getStatus().getStatusCode() == CommonStatusCodes.SIGN_IN_REQUIRED) {
-                                    Intent signInIntent = Auth.GoogleSignInApi
-                                            .getSignInIntent(mGoogleApiClient);
-                                    startActivityForResult(signInIntent, RC_ACCT);
-                                } else {
-                                    Log.e(TAG,"Error with " +
-                                            "silentSignIn: " +
-                                            googleSignInResult.getStatus());
-                                    onSignedIn(googleSignInResult.getStatus().getStatusCode(),
-                                            null);
-                                }
-                            }
-                        }
-                );
-            } else {
-                Log.d(TAG,"No connected Games API");
+            if (signIn)
+            {
+                signInSilently(mGoogleSignInClient);
+            }
+            else
+            {
                 onSignedIn(CommonStatusCodes.ERROR, null);
             }
         }
 
-        Log.d(TAG, "Done with processRequest, result is pending.");
+        Log.d(TAG, "Done with processRequest, result is pending. : request = "+request);
     }
 
-    private void buildClient(TokenRequest request) {
+    private void signInSilently(final GoogleSignInClient signInClient)
+    {
+        signInClient.silentSignIn().addOnCompleteListener(getActivity(),
+                new OnCompleteListener<GoogleSignInAccount>()
+                {
+                    @Override
+                    public void onComplete(@NonNull Task<GoogleSignInAccount> task)
+                    {
+                        if (task.isSuccessful())
+                        {
+                            // The signed in account is stored in the task's result.
+                            GoogleSignInAccount signedInAccount = task.getResult();
+                            onSignedIn(CommonStatusCodes.SUCCESS, signedInAccount);
+                        }
+                        else
+                        {
+                            // Player will need to sign-in explicitly using via UI
+                            startSignInIntent(signInClient);
+                        }
+                    }
+                });
+    }
 
+    private void startSignInIntent(GoogleSignInClient signInClient)
+    {
+        Intent intent = signInClient.getSignInIntent();
+        startActivityForResult(intent, RC_ACCT);
+    }
 
+    private void buildClient(TokenRequest request)
+    {
         Log.d(TAG,"Building client for: " + request);
             GoogleSignInOptions.Builder builder = new GoogleSignInOptions
                     .Builder(GoogleSignInOptions.DEFAULT_GAMES_SIGN_IN);
-            if (request.doAuthCode) {
-                if (!request.getWebClientId().isEmpty()) {
+            if (request.doAuthCode)
+            {
+                if (!request.getWebClientId().isEmpty())
+                {
                     builder.requestServerAuthCode(request.getWebClientId(),
                             request.getForceRefresh());
-                } else {
+                }
+                else
+                {
                     Log.e(TAG, "Web client ID is needed for Auth Code");
                     request.setResult(CommonStatusCodes.DEVELOPER_ERROR);
-                    synchronized (lock) {
+                    synchronized (lock)
+                    {
                         pendingTokenRequest = null;
                     }
                     return;
                 }
             }
 
-            if (request.doEmail) {
+            if (request.doEmail)
+            {
                 builder.requestEmail();
             }
 
-            if (request.doIdToken) {
-                if (!request.getWebClientId().isEmpty()) {
+            if (request.doIdToken)
+            {
+                if (!request.getWebClientId().isEmpty())
+                {
                     builder.requestIdToken(request.getWebClientId());
-                } else {
+                }
+                else
+                {
                     Log.e(TAG, "Web client ID is needed for ID Token");
                     request.setResult(CommonStatusCodes.DEVELOPER_ERROR);
-                    synchronized (lock) {
+                    synchronized (lock)
+                    {
                         pendingTokenRequest = null;
                     }
                     return;
                 }
             }
-            if (request.scopes != null) {
-                for (String s : request.scopes) {
+
+            if (request.scopes != null)
+            {
+                for (String s : request.scopes)
+                {
                     builder.requestScopes(new Scope(s));
                 }
             }
 
-            if (request.hidePopups) {
+            if (request.hidePopups)
+            {
                 Log.d(TAG, "hiding popup views for games API");
-                builder.addExtension(
-                        Games.GamesOptions.builder().setShowConnectingPopup(false)
-                                .build());
             }
 
-            if (request.accountName != null && !request.accountName.isEmpty()) {
+            if (request.accountName != null && !request.accountName.isEmpty())
+            {
                 builder.setAccountName(request.accountName);
             }
 
-
             GoogleSignInOptions options = builder.build();
 
-            GoogleApiClient.Builder clientBuilder = new GoogleApiClient.Builder(
-                    getActivity())
-                    .addApi(Auth.GOOGLE_SIGN_IN_API, options);
-            clientBuilder.addApi(Games.API);
-
-            clientBuilder.addConnectionCallbacks(this)
-                    .addOnConnectionFailedListener(this);
-
-            if (request.hidePopups) {
-                View invisible = new View(getActivity());
-                invisible.setVisibility(View.INVISIBLE);
-                invisible.setClickable(false);
-                clientBuilder.setViewForPopups(invisible);
-            }
-            mGoogleApiClient = clientBuilder.build();
-            mGoogleApiClient.connect(GoogleApiClient.SIGN_IN_MODE_OPTIONAL);
-
+            mGoogleSignInClient = GoogleSignIn.getClient(getActivity(), options);
     }
 
     /**
@@ -411,22 +415,29 @@ public class TokenFragment extends Fragment
      * @param data        An Intent, which can return result data to the caller
      */
     @Override
-    public void onActivityResult(int requestCode, int resultCode, Intent data) {
-        if (requestCode == RC_ACCT) {
-            GoogleSignInResult result =
-                    Auth.GoogleSignInApi.getSignInResultFromIntent(data);
-            if (result != null && result.isSuccess()) {
-                GoogleSignInAccount acct =  result.getSignInAccount();
-                onSignedIn(result.getStatus().getStatusCode(), acct);
-            } else if (resultCode == Activity.RESULT_CANCELED) {
-                onSignedIn(CommonStatusCodes.CANCELED, null);
-            } else if (result != null) {
-                Log.e(TAG,"GoogleSignInResult error: " + result.getStatus());
+    public void onActivityResult(int requestCode, int resultCode, Intent data)
+    {
+        Log.d(TAG,"onActivityResult : requestCode = " + requestCode+" : resultCode = "+resultCode);
+        if (requestCode == RC_ACCT)
+        {
+            GoogleSignInResult result = Auth.GoogleSignInApi.getSignInResultFromIntent(data);
+            if (result.isSuccess())
+            {
+                // The signed in account is stored in the result.
+                GoogleSignInAccount signedInAccount = result.getSignInAccount();
+                Log.d(TAG,"onActivityResult : result.getStatus() = " + result.getStatus()+" : signedInAccount = "+signedInAccount);
+                onSignedIn(result.getStatus().getStatusCode(), signedInAccount);
+            }
+            else if (result != null)
+            {
+                Log.e(TAG,"onActivityResult : result.getStatus() = " + result.getStatus());
                 onSignedIn(result.getStatus().getStatusCode(), null);
-            } else {
-                Log.e(TAG, "Google SignIn Result is null, resultCode is " +
+            }
+            else
+            {
+                Log.e(TAG, "onActivityResult : Google SignIn Result is null, resultCode is " +
                         resultCode + "(" +
-                GoogleSignInStatusCodes.getStatusCodeString(resultCode) + ")");
+                        GoogleSignInStatusCodes.getStatusCodeString(resultCode) + ")");
                 onSignedIn(CommonStatusCodes.ERROR, null);
             }
             return;
@@ -434,9 +445,11 @@ public class TokenFragment extends Fragment
         super.onActivityResult(requestCode, resultCode, data);
     }
 
-    private void onSignedIn(int resultCode, GoogleSignInAccount acct) {
-
-        if (resultCode == CommonStatusCodes.CANCELED) {
+    private void onSignedIn(int resultCode, GoogleSignInAccount acct)
+    {
+        Log.d(TAG,"onActivityResult : resultCode = " + resultCode+" : acct = "+acct);
+        if (resultCode == CommonStatusCodes.CANCELED)
+        {
             if (pendingTokenRequest != null)
             {
                 pendingTokenRequest.cancel();
@@ -445,12 +458,15 @@ public class TokenFragment extends Fragment
         }
 
         TokenRequest request;
-        synchronized (lock) {
+        synchronized (lock)
+        {
             request = pendingTokenRequest;
             pendingTokenRequest = null;
         }
-        if (request != null) {
-            if (acct != null) {
+        if (request != null)
+        {
+            if (acct != null)
+            {
                 SaveDeclinedSignInPreference(false);
                 request.setAuthCode(acct.getServerAuthCode());
                 request.setEmail(acct.getEmail());
@@ -461,7 +477,8 @@ public class TokenFragment extends Fragment
         }
     }
 
-    private void SaveDeclinedSignInPreference(boolean declined) {
+    private void SaveDeclinedSignInPreference(boolean declined)
+    {
         SharedPreferences sharedPref = getActivity().getPreferences(Context.MODE_PRIVATE);
         SharedPreferences.Editor editor = sharedPref.edit();
         editor.putBoolean(PREF_DECLINED_KEY, declined);
@@ -469,25 +486,17 @@ public class TokenFragment extends Fragment
     }
 
     @Override
-    public void onStart() {
+    public void onStart()
+    {
         Log.d(TAG, "onStart()");
         super.onStart();
-
-        // This just connects the client.  If there is no user signed in, you
-        // still need to call Auth.GoogleSignInApi.getSignInIntent() to start
-        // the sign-in process.
-        if (mGoogleApiClient != null) {
-            mGoogleApiClient.connect(GoogleApiClient.SIGN_IN_MODE_OPTIONAL);
-        }
     }
 
     @Override
-    public void onStop() {
+    public void onStop()
+    {
         Log.d(TAG, "onStop()");
         super.onStop();
-        if (mGoogleApiClient != null && mGoogleApiClient.isConnected()) {
-            mGoogleApiClient.disconnect();
-        }
     }
 
     /**
@@ -497,42 +506,25 @@ public class TokenFragment extends Fragment
      * Activity's lifecycle.
      */
     @Override
-    public void onResume() {
-        Log.d(TAG, "onResume called");
+    public void onResume()
+    {
         super.onResume();
-        if (helperFragment == null) {
+        if (helperFragment == null)
+        {
             helperFragment = this;
         }
             processRequest();
     }
 
     @Override
-    public void onConnected(@Nullable final Bundle bundle) {
-        Log.i(TAG,"onConnected called");
-        if (mGoogleApiClient == null) {
+    public void onConnected(@Nullable final Bundle bundle)
+    {
+        Log.i(TAG,"onConnected called : mGoogleSignInClient = "+ mGoogleSignInClient);
+        if (mGoogleSignInClient == null)
+        {
             return;
         }
-        if (mGoogleApiClient.hasConnectedApi(Games.API)) {
-            Auth.GoogleSignInApi.silentSignIn(mGoogleApiClient).setResultCallback(
-                    new ResultCallback<GoogleSignInResult>() {
-                        @Override
-                        public void onResult(
-                                @NonNull GoogleSignInResult googleSignInResult) {
-                            if (googleSignInResult.isSuccess()) {
-                                onSignedIn(
-                                        googleSignInResult.getStatus()
-                                                .getStatusCode(),
-                                        googleSignInResult.getSignInAccount());
-                            } else {
-                                Log.e(TAG, "Error with silentSignIn when connected: " +
-                                        googleSignInResult.getStatus());
-                                onSignedIn(googleSignInResult.getStatus()
-                                        .getStatusCode(),googleSignInResult.getSignInAccount());
-                            }
-                        }
-                    }
-            );
-        }
+        signInSilently(mGoogleSignInClient);
     }
 
     /**
@@ -543,20 +535,24 @@ public class TokenFragment extends Fragment
      * @param cause - The reason of the disconnection.
      */
     @Override
-    public void onConnectionSuspended(int cause) {
+    public void onConnectionSuspended(int cause)
+    {
         Log.d(TAG, "onConnectionSuspended() called: " + cause);
     }
 
     @Override
-    public void onConnectionFailed(@NonNull ConnectionResult connectionResult) {
-        Log.e(TAG,"onConnectionFailed: " + connectionResult.getErrorCode() +
-               ": " + connectionResult.getErrorMessage());
-        if (connectionResult.hasResolution()) {
+    public void onConnectionFailed(@NonNull ConnectionResult connectionResult)
+    {
+        Log.e(TAG,"onConnectionFailed : connectionResult.getErrorCode() = " + connectionResult.getErrorCode() +
+               " : connectionResult.getErrorMessage() = " + connectionResult.getErrorMessage()+
+                " : connectionResult.hasResolution() = "+connectionResult.hasResolution());
+        if (connectionResult.hasResolution())
+        {
             // Just start the intent, it will be easier.
-            Intent signInIntent = Auth.GoogleSignInApi
-                    .getSignInIntent(mGoogleApiClient);
-            startActivityForResult(signInIntent, RC_ACCT);
-        } else {
+            startSignInIntent(mGoogleSignInClient);
+        }
+        else
+        {
             onSignedIn(connectionResult.getErrorCode(), null);
         }
     }
@@ -564,7 +560,8 @@ public class TokenFragment extends Fragment
     /**
      * Helper class containing the request for information.
      */
-    private static class TokenRequest {
+    private static class TokenRequest
+    {
         private TokenPendingResult pendingResponse;
         private boolean doAuthCode;
         private boolean doEmail;
@@ -578,7 +575,8 @@ public class TokenFragment extends Fragment
         public TokenRequest(boolean fetchAuthCode, boolean fetchEmail,
                             boolean fetchIdToken, String webClientId, boolean
                             forceRefresh, String[] oAuthScopes,
-                            boolean hidePopups, String accountName) {
+                            boolean hidePopups, String accountName)
+        {
             pendingResponse = new TokenPendingResult();
             doAuthCode = fetchAuthCode;
             doEmail = fetchEmail;
@@ -595,11 +593,13 @@ public class TokenFragment extends Fragment
             this.accountName = accountName;
         }
 
-        public PendingResult<TokenResult> getPendingResponse() {
+        public PendingResult<TokenResult> getPendingResponse()
+        {
             return pendingResponse;
         }
 
-        public void setResult(int code) {
+        public void setResult(int code)
+        {
             pendingResponse.setStatus(code);
         }
 
@@ -607,15 +607,18 @@ public class TokenFragment extends Fragment
             pendingResponse.setEmail(email);
         }
 
-        public void cancel() {
+        public void cancel()
+        {
             pendingResponse.cancel();
         }
 
-        public void setAuthCode(String authCode) {
+        public void setAuthCode(String authCode)
+        {
             pendingResponse.setAuthCode(authCode);
         }
 
-        public void setIdToken(String idToken) {
+        public void setIdToken(String idToken)
+        {
             pendingResponse.setIdToken(idToken);
         }
 
@@ -627,12 +630,19 @@ public class TokenFragment extends Fragment
             return pendingResponse.result.getIdToken();
         }
 
-        public String getAuthCode() {
+        public String getAuthCode()
+        {
             return pendingResponse.result.getAuthCode();
         }
 
+        public  int getStatusCode()
+        {
+            return  pendingResponse.result.getStatusCode();
+        }
+
         @Override
-        public String toString() {
+        public String toString()
+        {
             return Integer.toHexString(hashCode()) + " (a:" +
                     doAuthCode + " e:" + doEmail + " i:" + doIdToken +
                     " wc: " + webClientId + " f: " + forceRefresh +")";
@@ -647,8 +657,10 @@ public class TokenFragment extends Fragment
         }
     }
 
-    public static boolean checkGooglePlayServicesAvailable() {
-        GooglePlayServicesUtil.isGooglePlayServicesAvailable(null);
-        return false;
+    public static boolean checkGooglePlayServicesAvailable()
+    {
+        GoogleApiAvailability apiAvailability = GoogleApiAvailability.getInstance();
+        int resultCode = apiAvailability.isGooglePlayServicesAvailable(null);
+        return resultCode == ConnectionResult.SUCCESS;
     }
 }
